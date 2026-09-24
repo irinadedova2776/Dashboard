@@ -1804,7 +1804,145 @@ function nxRender(){
     nxRender();
 })();
 </script>
-<!-- ===== /МОДУЛЬ: УМНАЯ АНАЛИТИКА ===== -->
+<!-- ===== МОДУЛЬ: НАСУЩНЫЕ ДЕЛА + ИСПРАВЛЕНИЯ v1 ===== -->
+<style>
+    .mm-card.full .dl { display:none; }
+    .anchor-checkbox.checked + .anchor-content .dl { display:none; }
+    .da-sec { margin-bottom:16px; }
+    .da-h { font-size:1.05em; margin-bottom:8px; }
+    .da-item { display:flex; align-items:center; gap:10px; padding:8px 12px; border-radius:8px; margin-bottom:6px;
+        background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.08); cursor:pointer; font-size:.92em; flex-wrap:wrap; }
+    .da-item:hover { background:rgba(255,255,255,.07); }
+    .da-box { width:18px; height:18px; border:2px solid #00d4ff; border-radius:5px; flex-shrink:0; }
+    .da-meta { color:#8892b0; font-size:.8em; margin-left:auto; }
+    .da-chip { display:inline-flex; align-items:center; gap:6px; padding:6px 12px; border-radius:10px; margin:3px;
+        cursor:pointer; font-size:.85em; border:1px solid rgba(255,255,255,.15); background:rgba(255,255,255,.04); }
+    .da-chip.on { background:rgba(0,255,136,.15); border-color:#00ff88; color:#00ff88; }
+    .da-empty { color:#8892b0; font-size:.88em; }
+</style>
+<script>
+function nx2IsDone(n){ const lv = getLeaves(n); return lv.length > 0 && lv.every(l => l.done); }
+
+function nx2Collect(){
+    const today = new Date(); today.setHours(0,0,0,0);
+    const over = [], tod = [], week = [];
+    (function w(ns){ ns.forEach(n => {
+        if (n.deadline && !nx2IsDone(n)){
+            const isLeaf = !n.children || n.children.length === 0;
+            const isAnchor = n.ref && n.ref.kind === 'anchor';
+            if (isLeaf || isAnchor){
+                const d = new Date(n.deadline + 'T00:00:00');
+                const diff = Math.round((d - today)/86400000);
+                if (diff < 0) over.push({n, diff});
+                else if (diff === 0) tod.push({n, diff});
+                else if (diff <= 7) week.push({n, diff});
+            }
+        }
+        if (n.children) w(n.children);
+    }); })(data.tree);
+    return { over, tod, week };
+}
+
+function nx2Item(it){
+    return `<div class="da-item" onclick="toggleDone('${it.n.id}')">
+        <div class="da-box"></div>
+        <span>${esc(it.n.title)}</span>
+        <span class="da-meta" style="color:${it.diff<0?'#ff4757':it.diff===0?'#ffa502':'#00d4ff'}">
+        ${it.diff<0 ? 'просрочено '+(-it.diff)+' дн.' : it.diff===0 ? 'сегодня' : 'через '+it.diff+' дн.'}</span>
+    </div>`;
+}
+
+function nx2Render(){
+    /* 1. Насущные дела на дашборде */
+    const box = document.getElementById('da-box');
+    if (box){
+        const { over, tod, week } = nx2Collect();
+        const todayStr = new Date().toISOString().split('T')[0];
+        const habits = data.habits.map(h => {
+            const on = h.history && h.history[todayStr];
+            return `<span class="da-chip ${on?'on':''}" onclick="toggleHabitDay('${h.id}','${todayStr}')">${on?'✅':'⬜'} ${esc(h.name)}</span>`;
+        }).join('');
+        const rev = (data.review ? data.review.subjects : []).filter(s => {
+            const lv = rvPriorityLevel(s.id); return lv === '🔴' || lv === '🟡';
+        }).map(s => `<span class="da-chip">${rvPriorityLevel(s.id)} ${esc(s.name)}</span>`).join('')
+            || '<span class="da-empty">повторение не требуется 🎉</span>';
+        box.innerHTML = `
+            <div class="da-sec"><div class="da-h" style="color:#ff4757;">🔴 Просрочено (${over.length})</div>
+                ${over.sort((a,b)=>a.diff-b.diff).map(nx2Item).join('') || '<div class="da-empty">ничего не просрочено 🎉</div>'}</div>
+            <div class="da-sec"><div class="da-h" style="color:#ffa502;">⏰ Сегодня (${tod.length})</div>
+                ${tod.map(nx2Item).join('') || '<div class="da-empty">на сегодня дедлайнов нет</div>'}</div>
+            <div class="da-sec"><div class="da-h" style="color:#00d4ff;">📅 Ближайшие 7 дней (${week.length})</div>
+                ${week.sort((a,b)=>a.diff-b.diff).slice(0,5).map(nx2Item).join('') || '<div class="da-empty">пусто</div>'}</div>
+            <div class="da-sec"><div class="da-h" style="color:#00ff88;">🏃 Привычки сегодня</div><div>${habits}</div></div>
+            <div class="da-sec"><div class="da-h" style="color:#c56cf0;">🔁 Что повторить</div><div>${rev}</div></div>`;
+    }
+
+    /* 2. Статистика: месяц и год */
+    const cards = document.getElementById('nx2-cards');
+    if (cards){
+        const cbd = data.stats.completedByDate || {};
+        const now = new Date();
+        const mKey = now.toISOString().slice(0,7);
+        let month = 0, year = 0; const byMonth = {};
+        Object.entries(cbd).forEach(([d,c]) => {
+            if (d.slice(0,7) === mKey) month += c;
+            if (d.slice(0,4) === String(now.getFullYear())){
+                year += c;
+                byMonth[d.slice(5,7)] = (byMonth[d.slice(5,7)]||0) + c;
+            }
+        });
+        cards.innerHTML = `
+            <div class="stat-card"><div class="stat-card-value">${month}</div><div class="stat-card-label">шагов за этот месяц</div></div>
+            <div class="stat-card"><div class="stat-card-value">${year}</div><div class="stat-card-label">шагов за ${now.getFullYear()} год</div></div>
+            <div class="stat-card"><div class="stat-card-value">${(month/now.getDate()).toFixed(1)}</div><div class="stat-card-label">в среднем за день (месяц)</div></div>`;
+        const names = ['Янв','Фев','Мар','Апр','Май','Июн','Июл','Авг','Сен','Окт','Ноя','Дек'];
+        let max = 1;
+        for (let i = 1; i <= 12; i++){ const v = byMonth[String(i).padStart(2,'0')]||0; if (v > max) max = v; }
+        document.getElementById('nx2-chart').innerHTML = names.map((nm,i) => {
+            const v = byMonth[String(i+1).padStart(2,'0')]||0;
+            return `<div class="chart-bar-item"><div class="chart-bar-value">${v}</div>
+                <div class="chart-bar" style="height:${Math.max(v/max*150,5)}px"></div>
+                <div class="chart-bar-label">${nm}</div></div>`;
+        }).join('');
+    }
+
+    /* 3. Убираем выполненные из обратного отсчёта аналитики */
+    const doneTitles = new Set();
+    (function w(ns){ ns.forEach(n => { if (n.deadline && nx2IsDone(n)) doneTitles.add(esc(n.title)); if (n.children) w(n.children); }); })(data.tree);
+    document.querySelectorAll('#nx-count .nx-count-row').forEach(row => {
+        const t = row.querySelector('span');
+        if (t && doneTitles.has(t.innerHTML)) row.remove();
+    });
+}
+
+(function(){
+    const dash = document.getElementById('page-dashboard');
+    if (dash){
+        dash.insertAdjacentHTML('afterbegin', `
+        <div class="section-card" style="border:2px solid rgba(255,107,53,.3);">
+            <h2 class="section-title" style="color:#ff6b35;">📌 Насущные дела</h2>
+            <p style="text-align:center;color:#8892b0;font-size:.85em;margin-bottom:14px;">
+                Клик по строке = отметить шаг выполненным. Клик по привычке = отметить за сегодня.</p>
+            <div id="da-box"></div>
+        </div>`);
+    }
+    const stats = document.getElementById('page-stats');
+    if (stats){
+        stats.insertAdjacentHTML('beforeend', `
+        <div class="section-card" style="border:2px solid rgba(255,215,0,.2);">
+            <h2 class="section-title" style="color:#ffd700;">📆 Шаги: месяц и год</h2>
+            <div class="stats-grid" id="nx2-cards"></div>
+            <div style="margin-top:10px;">
+                <div style="font-size:1.1em;color:#ffd700;margin-bottom:10px;">📈 Шаги по месяцам ${new Date().getFullYear()} года</div>
+                <div class="chart-bars" id="nx2-chart"></div>
+            </div>
+        </div>`);
+    }
+    const base = render;
+    render = function(){ base(); nx2Render(); };
+    nx2Render();
+})();
+</script>
 <script>
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
