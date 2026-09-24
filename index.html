@@ -1645,6 +1645,166 @@ const __baseRender = render;
 render = function(){ __baseRender(); rvRender(); };
 rvRender();
 </script>
+<!-- ===== МОДУЛЬ: УМНАЯ АНАЛИТИКА v1 ===== -->
+<style>
+    .nx-block { margin-bottom: 26px; }
+    .nx-h { font-size: 1.2em; color: #ffd700; margin-bottom: 12px; }
+    .nx-goal { margin-bottom: 12px; }
+    .nx-goal-head { display:flex; justify-content:space-between; font-size:.95em; margin-bottom:5px; }
+    .nx-bar { height: 10px; background: rgba(255,255,255,.08); border-radius: 5px; overflow:hidden; }
+    .nx-bar-fill { height:100%; border-radius:5px; background: linear-gradient(90deg,#00d4ff,#ff6b35); transition: width .4s; }
+    .nx-risk { display:flex; align-items:center; gap:12px; padding:10px 14px; border-radius:10px; margin-bottom:8px;
+        background:rgba(255,255,255,.03); border:1px solid rgba(255,255,255,.08); flex-wrap:wrap; }
+    .nx-risk-lvl { font-size:1.3em; }
+    .nx-risk-info { flex:1; min-width:200px; }
+    .nx-risk-title { font-weight:600; font-size:.95em; }
+    .nx-risk-meta { color:#8892b0; font-size:.8em; margin-top:3px; }
+    .nx-count-row { display:flex; justify-content:space-between; gap:10px; padding:8px 12px; border-radius:8px;
+        margin-bottom:6px; background:rgba(255,255,255,.03); font-size:.92em; flex-wrap:wrap; }
+    .nx-days { font-weight:700; }
+    .nx-rec-grid { display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:12px; }
+    .nx-rec { background:rgba(255,255,255,.05); border-radius:12px; padding:14px; text-align:center; }
+    .nx-rec b { display:block; font-size:1.5em; color:#ffd700; margin-bottom:4px; }
+    .nx-rec span { color:#8892b0; font-size:.8em; }
+</style>
+<script>
+function nxGoalProgress(goalId){
+    const n = findRef('goal', goalId);
+    if (!n) return { done:0, total:0, pct:0 };
+    const leaves = getLeaves(n);
+    const done = leaves.filter(l => l.done).length;
+    return { done, total: leaves.length, pct: leaves.length ? Math.round(done/leaves.length*100) : 0 };
+}
+function nxRiskLevel(a, progress){
+    if (a.checked) return { lvl:'✅', txt:'выполнено' };
+    const today = new Date(); today.setHours(0,0,0,0);
+    const dl = a.deadline ? new Date(a.deadline + 'T00:00:00') : null;
+    if (dl && dl < today) return { lvl:'🔴', txt:'дедлайн просрочен' };
+    const e = today.getDate() / new Date(today.getFullYear(), today.getMonth()+1, 0).getDate();
+    if (progress >= e - 0.15) return { lvl:'🟢', txt:'в графике' };
+    if (progress >= e - 0.4) return { lvl:'🟡', txt:'под угрозой' };
+    return { lvl:'🔴', txt:'не успеваешь' };
+}
+function nxWalk(nodes, fn){ nodes.forEach(n => { fn(n); if (n.children) nxWalk(n.children, fn); }); }
+
+function nxRender(){
+    const g1 = document.getElementById('nx-goals');
+    if (!g1) return;
+
+    /* 1. Прогресс по глобальным целям */
+    g1.innerHTML = data.goals.map(g => {
+        const p = nxGoalProgress(g.id);
+        return `<div class="nx-goal">
+            <div class="nx-goal-head"><span>${esc(g.title)}</span><span>${p.done}/${p.total} · ${p.pct}%</span></div>
+            <div class="nx-bar"><div class="nx-bar-fill" style="width:${p.pct}%"></div></div>
+        </div>`;
+    }).join('');
+
+    /* 2. Риски якорей текущего месяца */
+    const mn = ['ЯНВАРЬ','ФЕВРАЛЬ','МАРТ','АПРЕЛЬ','МАЙ','ИЮНЬ','ИЮЛЬ','АВГУСТ','СЕНТЯБРЬ','ОКТЯБРЬ','НОЯБРЬ','ДЕКАБРЬ'][new Date().getMonth()];
+    const month = data.months.find(m => m.name.toUpperCase().includes(mn));
+    const r2 = document.getElementById('nx-risk');
+    if (month && month.anchors.length){
+        r2.innerHTML = month.anchors.map(a => {
+            const n = findRef('anchor', a.id);
+            let pct = 0;
+            if (n){ const lv = getLeaves(n); pct = lv.length ? lv.filter(l => l.done).length / lv.length : 0; }
+            const risk = nxRiskLevel(a, pct);
+            const goal = data.goals.find(g => g.id === a.goalId);
+            return `<div class="nx-risk">
+                <div class="nx-risk-lvl">${risk.lvl}</div>
+                <div class="nx-risk-info">
+                    <div class="nx-risk-title">${esc(a.text)}</div>
+                    <div class="nx-risk-meta">${goal ? esc(goal.title) : ''} · прогресс ${Math.round(pct*100)}% · ${risk.txt}${a.deadline ? ' · дедлайн ' + a.deadline : ''}</div>
+                </div>
+            </div>`;
+        }).join('');
+    } else r2.innerHTML = '<p style="color:#8892b0;">На текущий месяц якорей нет.</p>';
+
+    /* 3. Обратный отсчёт до дедлайнов */
+    const today = new Date(); today.setHours(0,0,0,0);
+    const items = [];
+    nxWalk(data.tree, n => {
+        if (n.deadline){
+            const d = new Date(n.deadline + 'T00:00:00');
+            items.push({ n, diff: Math.round((d - today)/86400000) });
+        }
+    });
+    items.sort((a,b) => a.diff - b.diff);
+    document.getElementById('nx-count').innerHTML = items.slice(0,6).map(it => `
+        <div class="nx-count-row"><span>${esc(it.n.title)}</span>
+        <span class="nx-days" style="color:${it.diff<0?'#ff4757':it.diff<=7?'#ffa502':'#8892b0'}">
+        ${it.diff<0 ? 'просрочено на ' + (-it.diff) + ' дн.' : 'осталось ' + it.diff + ' дн.'}</span></div>`).join('')
+        || '<p style="color:#8892b0;">Дедлайнов нет.</p>';
+
+    /* 4. Рекорды и паттерны */
+    const cbd = data.stats.completedByDate || {};
+    let maxDay = 0, maxDate = '—', total = 0;
+    const byWeek = [0,0,0,0,0,0,0], byWeekCnt = [0,0,0,0,0,0,0];
+    Object.entries(cbd).forEach(([d,c]) => {
+        if (c > maxDay){ maxDay = c; maxDate = d; }
+        total += c;
+        const wd = new Date(d + 'T00:00:00').getDay();
+        byWeek[wd] += c; byWeekCnt[wd]++;
+    });
+    const wdNames = ['Вс','Пн','Вт','Ср','Чт','Пт','Сб'];
+    let bestWd = 1, bestAvg = -1;
+    for (let i = 0; i < 7; i++){
+        const avg = byWeekCnt[i] ? byWeek[i]/byWeekCnt[i] : 0;
+        if (avg > bestAvg){ bestAvg = avg; bestWd = i; }
+    }
+    const pbd = data.stats.pomodorosByDate || {};
+    let maxPom = 0, maxPomDate = '—';
+    Object.entries(pbd).forEach(([d,c]) => { if (c > maxPom){ maxPom = c; maxPomDate = d; } });
+    let run = 0, maxRun = 0;
+    for (let i = 0; i < 730; i++){
+        const d = new Date(); d.setDate(d.getDate() - i);
+        const ds = d.toISOString().split('T')[0];
+        if ((cbd[ds]||0) > 0){ run++; if (run > maxRun) maxRun = run; } else run = 0;
+    }
+    const rec = document.getElementById('nx-rec');
+    if (total === 0){
+        rec.innerHTML = '<p style="color:#8892b0;">Пока нет данных — отметь первый шаг, и рекорды начнут копиться! 🏁</p>';
+    } else {
+        rec.innerHTML = `
+            <div class="nx-rec"><b>${maxDay}</b><span>макс. шагов за день<br>${maxDate}</span></div>
+            <div class="nx-rec"><b>${maxPom}</b><span>макс. 🍅 за день<br>${maxPomDate}</span></div>
+            <div class="nx-rec"><b>${maxRun}</b><span>лучшая серия дней</span></div>
+            <div class="nx-rec"><b>${wdNames[bestWd]}</b><span>лучший день недели<br>в ср. ${bestAvg.toFixed(1)} шага</span></div>
+            <div class="nx-rec"><b>${total}</b><span>всего шагов за всё время</span></div>`;
+    }
+
+    /* 5. Где больше всего пробелов */
+    const gaps = (data.review && data.review.gaps) || [];
+    const open = gaps.filter(g => g.status === 'open');
+    const cnt = {};
+    open.forEach(g => { cnt[g.subjectId] = (cnt[g.subjectId]||0) + 1; });
+    const top = Object.entries(cnt).sort((a,b) => b[1]-a[1]).slice(0,5);
+    document.getElementById('nx-gaps').innerHTML = top.map(([sid,c]) => {
+        const s = data.review.subjects.find(x => x.id === sid);
+        return `<div class="nx-count-row"><span>${s ? esc(s.name) : '—'}</span>
+        <span class="nx-days" style="color:#ff6b35">${c} откр. пробелов</span></div>`;
+    }).join('') || '<p style="color:#8892b0;">Открытых пробелов нет. 🎉</p>';
+}
+
+(function(){
+    const page = document.getElementById('page-stats');
+    if (!page) return;
+    page.insertAdjacentHTML('afterbegin', `
+    <div class="section-card" style="border:2px solid rgba(255,215,0,.25);">
+        <h2 class="section-title" style="color:#ffd700;">🧠 Умная аналитика</h2>
+        <div class="nx-block"><div class="nx-h">🎯 Прогресс по глобальным целям</div><div id="nx-goals"></div></div>
+        <div class="nx-block"><div class="nx-h">🚦 Риски якорей текущего месяца</div><div id="nx-risk"></div></div>
+        <div class="nx-block"><div class="nx-h">⏰ Обратный отсчёт до дедлайнов</div><div id="nx-count"></div></div>
+        <div class="nx-block"><div class="nx-h">🏆 Рекорды и паттерны</div><div class="nx-rec-grid" id="nx-rec"></div></div>
+        <div class="nx-block"><div class="nx-h">⚠️ Где больше всего пробелов</div><div id="nx-gaps"></div></div>
+    </div>`);
+    const base = render;
+    render = function(){ base(); nxRender(); };
+    nxRender();
+})();
+</script>
+<!-- ===== /МОДУЛЬ: УМНАЯ АНАЛИТИКА ===== -->
 <script>
 if ('serviceWorker' in navigator) {
     window.addEventListener('load', () => navigator.serviceWorker.register('sw.js'));
